@@ -1,0 +1,31 @@
+# eks-automode-arm.tfvars
+# Copy and populate before running terraform plan/apply
+
+aws_region      = "us-east-1"
+cluster_name    = "dvb-eks-arm"
+cluster_version = "1.32"
+
+vpc_id     = "vpc-xxxxxxxxxxxxxxxxx"
+subnet_ids = [
+  "subnet-xxxxxxxxxxxxxxxxx", # private-az1
+  "subnet-yyyyyyyyyyyyyyyyy", # private-az2
+  "subnet-zzzzzzzzzzzzzzzzz", # private-az3
+]
+
+# Lock API server access to your CIDR or leave open for demo
+public_access_cidrs = ["0.0.0.0/0"]
+
+# ARM NodePool tuning
+arm_nodepool_name           = "arm-graviton"
+arm_instance_categories     = ["c", "m", "r"]   # c7g/c8g, m7g/m8g, r7g/r8g
+arm_instance_generation_min = "4"
+arm_capacity_type           = "on-demand"        # or "spot" for cost savings
+arm_nodepool_cpu_limit      = "1000"
+arm_nodepool_memory_limit   = "1000Gi"
+arm_node_expire_after       = "336h"             # 14 days
+
+tags = {
+  Environment = "demo"
+  Owner       = "dustin.vanbuskirk"
+  ManagedBy   = "terraform"
+}
