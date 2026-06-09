@@ -1,5 +1,13 @@
 # kubearchinspect on EKS Graviton — end to end
 
+> [!WARNING]
+> **🚧 Testing phase.** This repository is an experimental lab/demo under active
+> development and is **not** production-ready. Expect breaking changes, gaps, and
+> rough edges, and note that a full `terraform apply` of the whole module has not
+> yet been end-to-end verified (see [Known caveats](#known-caveats)). Run it in a
+> throwaway/sandbox AWS account and a non-production Octopus space, review the code
+> before you apply it, and `terraform destroy` when you're done. Use at your own risk.
+
 This repository provisions a complete, working pipeline from three credentials. A
 single `terraform apply` stands up an **AWS EKS Auto Mode cluster on arm64
 (Graviton)**, an **ECR** registry, a fully configured **Octopus Deploy** project
