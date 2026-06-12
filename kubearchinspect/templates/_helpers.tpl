@@ -65,6 +65,19 @@ Namespace - allows override
 {{- end }}
 
 {{/*
+Cluster-scoped resource name (ClusterRole / ClusterRoleBinding).
+Each environment deploys a SEPARATE Helm release of this chart — same release
+name (kubearchinspect), different namespace (development / staging / production).
+Cluster-scoped resources are global, so if they shared one name the first release
+to install would own them and every later release would fail to adopt them with
+"invalid ownership metadata ... release-namespace must equal ...". Suffixing the
+name with the release namespace gives each release its own ClusterRole/Binding.
+*/}}
+{{- define "kubearchinspect.clusterRoleName" -}}
+{{- printf "%s-%s" (include "kubearchinspect.fullname" .) (include "kubearchinspect.namespace" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
 Build the kubearchinspect CLI args from values.
 The command is `images`, pointed at the mounted in-cluster kubeconfig. The only
 optional flag is --debug; kubearchinspect 0.7.0 has no namespace, check-newer-
