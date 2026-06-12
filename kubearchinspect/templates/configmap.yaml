@@ -1,0 +1,38 @@
+# In-cluster kubeconfig for the kubearchinspect Job.
+#
+# kubearchinspect (0.7.0) loads its kube config from a file (default
+# ~/.kube/config) and does NOT fall back to the in-cluster service account, so
+# running it as a Job needs an explicit kubeconfig. This one carries no secrets:
+# it references the projected service-account token and CA by their standard
+# mount paths, so client-go reads (and re-reads on rotation) the live token. The
+# Job mounts this ConfigMap and passes --kube-config-path (see _helpers.tpl).
+#
+# This is a normal (non-hook) resource, so it is created during the main release
+# phase and is present before the post-install/post-upgrade Job hook runs.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kubearchinspect.fullname" . }}-kubeconfig
+  namespace: {{ include "kubearchinspect.namespace" . }}
+  labels:
+    {{- include "kubearchinspect.labels" . | nindent 4 }}
+data:
+  kubeconfig: |
+    apiVersion: v1
+    kind: Config
+    clusters:
+      - name: in-cluster
+        cluster:
+          server: {{ .Values.kubeconfig.server }}
+          certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    users:
+      - name: in-cluster
+        user:
+          tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    contexts:
+      - name: in-cluster
+        context:
+          cluster: in-cluster
+          user: in-cluster
+          namespace: {{ include "kubearchinspect.namespace" . }}
+    current-context: in-cluster
