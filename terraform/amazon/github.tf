@@ -56,24 +56,24 @@ resource "github_actions_secret" "aws_access_key_id" {
   count           = var.create_ecr_push_user ? 1 : 0
   repository      = var.github_repository
   secret_name     = "AWS_ACCESS_KEY_ID"
-  plaintext_value = aws_iam_access_key.ecr_push[0].id
+  value           = aws_iam_access_key.ecr_push[0].id
 }
 
 resource "github_actions_secret" "aws_secret_access_key" {
   count           = var.create_ecr_push_user ? 1 : 0
   repository      = var.github_repository
   secret_name     = "AWS_SECRET_ACCESS_KEY"
-  plaintext_value = aws_iam_access_key.ecr_push[0].secret
+  value           = aws_iam_access_key.ecr_push[0].secret
 }
 
 resource "github_actions_secret" "octopus_server_url" {
   repository      = var.github_repository
   secret_name     = "OCTOPUS_SERVER_URL"
-  plaintext_value = var.octopus_server_url
+  value           = var.octopus_server_url
 }
 
 resource "github_actions_secret" "octopus_api_key" {
   repository      = var.github_repository
   secret_name     = "OCTOPUS_API_KEY"
-  plaintext_value = var.octopus_api_key
+  value           = var.octopus_api_key
 }

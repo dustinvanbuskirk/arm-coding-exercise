@@ -39,12 +39,16 @@ resource "aws_eks_cluster" "this" {
     node_role_arn = aws_iam_role.node.arn
   }
 
-  # Load balancing capability is disabled: this lab is egress-only and runs no
-  # Service of type LoadBalancer or Ingress, so nothing should ever mint an ELB.
-  # (compute + block storage Auto Mode capabilities below remain enabled.)
+  # EKS Auto Mode requires compute_config.enabled,
+  # kubernetes_network_config.elastic_load_balancing.enabled, and
+  # storage_config.block_storage.enabled to ALL be the same value — you cannot
+  # run Auto Mode compute/storage with load balancing disabled. Enabling the LB
+  # *capability* provisions nothing on its own: an ELB is only ever created if a
+  # Service of type LoadBalancer or an Ingress is deployed. This lab deploys
+  # none and the ELB subnet tags are removed, so the cluster stays egress-only.
   kubernetes_network_config {
     elastic_load_balancing {
-      enabled = false
+      enabled = true
     }
   }
 
@@ -97,14 +101,42 @@ resource "aws_eks_cluster" "this" {
 # ---------------------------------------------------------------------------
 data "aws_caller_identity" "current" {}
 
+# EKS access entries require a PERMANENT IAM principal ARN (role or user). For an
+# assumed role, get-caller-identity returns the STS *session* ARN
+# (arn:aws:sts::ACCT:assumed-role/ROLE/SESSION), which the API rejects with
+# "principalArn parameter format is not valid". So when the caller is an assumed
+# role — including AWS SSO / Identity Center — we look the role up by name to get
+# its real IAM role ARN. For SSO this resolves to the full path form,
+# arn:aws:iam::ACCT:role/aws-reserved/sso.amazonaws.com/<region>/AWSReservedSSO_...,
+# which access entries accept (unlike the old aws-auth ConfigMap, an access-entry
+# role ARN may include a path). Set var.cluster_admin_principal_arn to override.
+locals {
+  caller_arn        = data.aws_caller_identity.current.arn
+  caller_is_assumed = can(regex(":assumed-role/", local.caller_arn))
+  caller_role_name  = local.caller_is_assumed ? regex(":assumed-role/([^/]+)/", local.caller_arn)[0] : ""
+
+  admin_principal_arn = (
+    var.cluster_admin_principal_arn != "" ? var.cluster_admin_principal_arn :
+    local.caller_is_assumed ? data.aws_iam_role.caller[0].arn :
+    local.caller_arn
+  )
+}
+
+# Only looked up when auto-deriving from an assumed-role caller. GetRole accepts
+# the friendly role name (last ARN segment) and returns the full ARN incl. path.
+data "aws_iam_role" "caller" {
+  count = var.cluster_admin_principal_arn == "" && local.caller_is_assumed ? 1 : 0
+  name  = local.caller_role_name
+}
+
 resource "aws_eks_access_entry" "admin" {
   cluster_name  = aws_eks_cluster.this.name
-  principal_arn = data.aws_caller_identity.current.arn
+  principal_arn = local.admin_principal_arn
 }
 
 resource "aws_eks_access_policy_association" "admin" {
   cluster_name  = aws_eks_cluster.this.name
-  principal_arn = data.aws_caller_identity.current.arn
+  principal_arn = local.admin_principal_arn
   policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
 
   access_scope {

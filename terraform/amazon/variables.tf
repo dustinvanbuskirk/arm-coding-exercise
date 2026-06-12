@@ -24,6 +24,18 @@ variable "public_access_cidrs" {
   default     = ["0.0.0.0/0"]
 }
 
+variable "cluster_admin_principal_arn" {
+  description = <<-EOT
+    IAM principal ARN to grant cluster-admin via an EKS access entry. Leave empty
+    to auto-derive from the caller: an STS assumed-role/SSO session ARN is resolved
+    to its underlying IAM role ARN (EKS access entries reject the STS session ARN).
+    Set this explicitly if the auto-derived ARN isn't what you need — e.g. to force
+    the path-stripped form arn:aws:iam::<acct>:role/AWSReservedSSO_<name>_<slug>.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Tags applied to all AWS resources"
   type        = map(string)
@@ -165,8 +177,39 @@ variable "octopus_server_url" {
 }
 
 variable "octopus_polling_url" {
-  description = "Polling comms address for the agent/worker"
+  description = <<-EOT
+    Polling Tentacle comms address for the agent/worker. Leave empty to
+    auto-derive: Octopus Cloud serves polling comms on the instance URL with a
+    "polling." prefix (https://polling.<name>.octopus.app), which is NOT the
+    portal URL. Set explicitly for self-hosted servers (e.g. https://host:10943).
+  EOT
   type        = string
+  default     = ""
+}
+
+variable "arm_pod_node_selector" {
+  description = <<-EOT
+    Node selector applied to the Octopus agent/worker tentacle pods, pinning them
+    to arm64 / Graviton nodes. The EKS Auto Mode general-purpose NodePool is
+    amd64-only, so requiring arm64 routes scheduling to the custom Graviton
+    NodePool. The ephemeral script pods are co-located on the tentacle's node by
+    the chart's ReadWriteOnce mode, so they inherit arm64 automatically. Override
+    to pin to a specific pool, e.g. { "karpenter.sh/nodepool" = "graviton-arm64" }.
+  EOT
+  type        = map(string)
+  default     = { "kubernetes.io/arch" = "arm64" }
+}
+
+variable "agent_pod_security_context" {
+  description = <<-EOT
+    Pod-level securityContext applied to the Octopus agent/worker tentacle pods.
+    Defaults to setting the SELinux type to spc_t (super-privileged container),
+    which the tentacle needs to manage script pods and volume mounts on
+    SELinux-enforcing nodes (e.g. Bottlerocket / AL2023 under EKS Auto Mode).
+    Per the chart, leave runAsGroup/fsGroup unset (or 0). Set to {} to disable.
+  EOT
+  type        = any
+  default     = { seLinuxOptions = { type = "spc_t" } }
 }
 
 variable "octopus_grpc_url" {
@@ -239,6 +282,12 @@ variable "environments" {
   default = ["Development", "Staging", "Production"]
 }
 
+variable "octopus_lifecycle_name" {
+  description = "Name of the custom Octopus lifecycle (auto Dev -> auto Staging -> manual Production) used by the project"
+  type        = string
+  default     = "kubearchinspect Auto Dev to Staging"
+}
+
 # ── Octopus Kubernetes Agent (deployment target) ────────────────────────────────
 
 variable "install_octopus_agent" {
@@ -248,7 +297,7 @@ variable "install_octopus_agent" {
 
 variable "octopus_agent_chart_version" {
   type    = string
-  default = "2.36.0"
+  default = "3.5.0"
 }
 
 variable "octopus_agent_namespace" {
@@ -273,7 +322,7 @@ variable "octopus_agent_storage_size" {
 
 variable "octopus_agent_k8s_monitor_enabled" {
   type    = bool
-  default = false
+  default = true
 }
 
 # ── Octopus Worker ──────────────────────────────────────────────────────────────
@@ -296,11 +345,6 @@ variable "octopus_worker_pool_name" {
 variable "octopus_worker_namespace" {
   type    = string
   default = "octopus-workers"
-}
-
-variable "octopus_worker_count" {
-  type    = number
-  default = 2
 }
 
 variable "octopus_worker_storage_size" {

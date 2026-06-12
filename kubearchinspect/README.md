@@ -87,9 +87,9 @@ Legend:
 | `job.ttlSecondsAfterFinished` | Auto-cleanup delay after job completes | `600` |
 | `job.backoffLimit` | Retry attempts on failure | `2` |
 | `job.activeDeadlineSeconds` | Job timeout in seconds | `300` |
-| `inspect.namespace` | Namespace to scan (empty = all) | `""` |
-| `inspect.checkNewerVersions` | Check newer image versions for arm64 support | `true` |
-| `inspect.logLevel` | Log verbosity: `info` or `debug` | `info` |
+| `inspect.debug` | Enable verbose `--debug` logging | `false` |
+| `kubeconfig.mountPath` | Where the in-cluster kubeconfig is mounted | `/etc/kubearchinspect` |
+| `kubeconfig.server` | In-cluster API server address | `https://kubernetes.default.svc` |
 | `rbac.scope` | `cluster` or `namespace` RBAC scope | `cluster` |
 | `pod.nodeSelector` | Node selector for the Job pod | `kubernetes.io/arch: arm64` |
 | `pod.resources` | CPU/memory requests and limits | See values.yaml |

@@ -22,25 +22,33 @@ job:
   # Number of retries before marking the Job as failed
   backoffLimit: 2
 
-  # Timeout in seconds for the entire Job. Matches kubearchinspect's internal --timeout flag.
+  # Hard wall-clock limit for the Job, enforced by Kubernetes (not a tool flag).
   activeDeadlineSeconds: 300
 
   # Restart policy for the pod - must be Never or OnFailure for Jobs
   restartPolicy: Never
 
 # -- kubearchinspect CLI arguments
-# These map directly to kubearchinspect command flags
+# The only subcommand is `images`, which scans EVERY running image in the whole
+# cluster (it has no namespace filter) and automatically checks newer image
+# versions for arm64 support. There is therefore no namespace / check-newer-
+# versions / log-level flag — verified against kubearchinspect 0.7.0. The one
+# optional knob is verbose debug logging.
 inspect:
-  # Kubernetes namespace(s) to scan. Leave empty to scan all namespaces.
-  # Example: "default" or "production"
-  namespace: ""
+  # Enable verbose debug logging (passes --debug).
+  debug: false
 
-  # If true, also checks newer image versions for arm64 compatibility
-  # (maps to --check-newer-versions flag)
-  checkNewerVersions: true
-
-  # Output verbosity: info, debug
-  logLevel: "info"
+# -- In-cluster kubeconfig
+# kubearchinspect defaults its kube config path to ~/.kube/config and does NOT
+# fall back to the in-cluster service account, so when it runs as a Job we mount
+# a kubeconfig that authenticates with the pod's projected service-account token
+# against the in-cluster API, and point the tool at it with --kube-config-path.
+# The token and CA are read from the standard service-account mount paths.
+kubeconfig:
+  # Directory the kubeconfig is mounted into; the file is <mountPath>/kubeconfig.
+  mountPath: /etc/kubearchinspect
+  # In-cluster API server address (default Kubernetes Service DNS name).
+  server: https://kubernetes.default.svc
 
 # -- ServiceAccount
 serviceAccount:
@@ -88,12 +96,34 @@ pod:
     runAsNonRoot: true
     runAsUser: 1000
     runAsGroup: 1000
+    # Group-own mounted volumes (the shared emptyDir the ecrAuth init container
+    # writes the docker config into) so the non-root user can read/write them.
+    fsGroup: 1000
 
 # -- Image pull secrets (for private ECR repos)
 # Not needed when nodes have ECR pull access via their instance role (the Auto
 # Mode node role includes AmazonEC2ContainerRegistryPullOnly).
 imagePullSecrets: []
 # - name: ecr-pull-secret
+
+# -- Private-registry auth for kubearchinspect's OWN manifest queries
+# kubearchinspect inspects each running image's manifest directly from the
+# registry and reads credentials only from $HOME/.docker/config.json — it does
+# NOT use Kubernetes imagePullSecrets or the kubelet pull path. So private ECR
+# images report an "Authentication Error" unless the tool is handed a docker
+# config. When enabled, an init container mints a short-lived ECR token (using
+# the pod's AWS credentials — grant the ServiceAccount ECR read via EKS Pod
+# Identity or IRSA) and writes it to a shared volume the tool reads via $HOME.
+# Octopus enables this automatically (octopus-process.tf sets registry/region);
+# leave it off for a plain public-registry `helm install`.
+ecrAuth:
+  enabled: false
+  # ECR registry host, e.g. 336151728602.dkr.ecr.us-east-1.amazonaws.com
+  registry: ""
+  # AWS region of the registry, e.g. us-east-1
+  region: ""
+  # AWS CLI image for the init container (must have an arm64 variant)
+  awsCliImage: public.ecr.aws/aws-cli/aws-cli:latest
 
 # -- Namespace override. Defaults to the release namespace.
 namespaceOverride: ""

@@ -44,6 +44,10 @@ The terminal running `terraform apply` needs permission to create and manage:
 
 If you cannot grant a category, use the bring-your-own fallbacks below.
 
+> Tip: run `bash scripts/preflight-aws.sh` (from the repo root) before applying —
+> it simulates the actions below against your principal and reports any that are
+> denied, so you find out up front instead of mid-apply.
+
 ### Bring your own (when you lack a permission)
 
 | You can't create | Set | And supply |

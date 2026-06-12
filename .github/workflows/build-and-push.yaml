@@ -87,8 +87,8 @@ jobs:
       - name: Build and push Docker image (arm64)
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./Dockerfile
+          context: ./kubearchinspect
+          file: ./kubearchinspect/Dockerfile
           push: true
           platforms: linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
@@ -106,22 +106,28 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v4
 
-      # Package the chart at the SAME version as the image and push it to ECR
-      # as an OCI artifact under charts/<name>. This is the package whose
-      # version the Octopus release selects.
-      - name: Package and push Helm chart
-        run: |
-          VERSION="${{ steps.meta.outputs.version }}"
-          aws ecr get-login-password --region "${{ vars.AWS_REGION }}" \
-            | helm registry login --username AWS --password-stdin "${{ vars.ECR_REGISTRY }}"
-
-          helm package . --version "$VERSION" --app-version "$VERSION"
-          helm push "${{ vars.ECR_REPOSITORY }}-$VERSION.tgz" "oci://${{ vars.ECR_REGISTRY }}/charts"
-
       - name: Install Octopus CLI
         uses: OctopusDeploy/install-octopus-cli-action@v3
         with:
           version: latest
+
+      # Package the chart at the SAME version as the image and upload it to the
+      # Octopus built-in feed. The Helm deploy step acquires it on the agent over
+      # the Tentacle protocol (no docker, no Server-side acquisition). helm names
+      # the file <chart-name>-<version>.tgz; the chart name is "kubearchinspect"
+      # (Chart.yaml `name:`), which is the package_id the deploy step expects.
+      - name: Package Helm chart and upload to Octopus
+        env:
+          OCTOPUS_URL: ${{ secrets.OCTOPUS_SERVER_URL }}
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
+          OCTOPUS_SPACE: ${{ vars.OCTOPUS_SPACE }}
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          helm package ./kubearchinspect --version "$VERSION" --app-version "$VERSION" --destination .
+          octopus package upload \
+            --package "kubearchinspect-$VERSION.tgz" \
+            --overwrite-mode overwrite \
+            --no-prompt
 
       - name: Generate Build Information
         run: |
@@ -182,5 +188,5 @@ jobs:
           echo "**Service:** ${{ env.SERVICE_NAME }}" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ steps.meta.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** ${{ steps.meta.outputs.image_uri }} (linux/arm64)" >> $GITHUB_STEP_SUMMARY
-          echo "**Chart:** oci://${{ vars.ECR_REGISTRY }}/charts/${{ vars.ECR_REPOSITORY }}:${{ steps.meta.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Chart:** kubearchinspect ${{ steps.meta.outputs.version }} (Octopus built-in feed)" >> $GITHUB_STEP_SUMMARY
           echo "✅ Build info pushed and release ${{ steps.meta.outputs.version }} created" >> $GITHUB_STEP_SUMMARY

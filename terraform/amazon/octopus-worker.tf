@@ -43,7 +43,7 @@ resource "helm_release" "octopus_worker" {
         acceptEula           = "Y"
         name                 = var.cluster_name
         serverUrl            = var.octopus_server_url
-        serverCommsAddresses = [var.octopus_polling_url]
+        serverCommsAddresses = [local.octopus_polling_address]
         space                = var.octopus_space_name
 
         deploymentTarget = {
@@ -56,17 +56,27 @@ resource "helm_release" "octopus_worker" {
             workerPools = [local.worker_pool_id]
           }
         }
+
+        # Pin the tentacle (worker) pod onto arm64 / Graviton. Script pods are
+        # co-located on this node by the chart's RWO mode (below), so they inherit
+        # arm64 without a separate scriptPods affinity.
+        nodeSelector = var.arm_pod_node_selector
+
+        # Pod securityContext (SELinux spc_t by default) — see agent release.
+        securityContext = var.agent_pod_security_context
       }
 
+      # Direct EBS-backed workspace (ReadWriteOnce). On chart 3.x the tentacle is
+      # a single pod and co-locates its script pods on its own node, so one RWO
+      # EBS volume serves the worker and its script pods. No NFS.
       persistence = {
+        accessModes      = ["ReadWriteOnce"]
         storageClassName = kubernetes_storage_class_v1.ebs_gp3.metadata[0].name
         size             = var.octopus_worker_storage_size
         nfs = {
           enabled = false
         }
       }
-
-      replicaCount = var.octopus_worker_count
 
       serviceAccount = {
         create = false

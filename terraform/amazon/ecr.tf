@@ -32,21 +32,6 @@ resource "aws_ecr_lifecycle_policy" "kubearchinspect" {
   })
 }
 
-# Separate repo for the Helm chart (OCI). `helm push` names the repo after the
-# chart, so without a distinct path it would collide with the image repo. We
-# push the chart under a "charts/" prefix -> repo "charts/<name>".
-resource "aws_ecr_repository" "chart" {
-  name                 = "charts/${var.ecr_repository_name}"
-  image_tag_mutability = var.ecr_image_tag_mutability
-  force_delete         = var.ecr_force_delete
-
-  image_scanning_configuration {
-    scan_on_push = false
-  }
-
-  tags = var.tags
-}
-
 # ---------------------------------------------------------------------------
 # Scoped push user for CI.
 #
@@ -81,8 +66,8 @@ resource "aws_iam_user_policy" "ecr_push" {
       },
       {
         # Push/pull + enumerate, limited to THIS repository only. The describe/
-        # list actions are what the Octopus ECR feed uses to surface available
-        # image and chart versions when creating a release.
+        # list actions are what the Octopus ECR image feed uses to surface
+        # available image versions when creating a release.
         Sid    = "EcrPushPullThisRepo"
         Effect = "Allow"
         Action = [
@@ -99,7 +84,6 @@ resource "aws_iam_user_policy" "ecr_push" {
         ]
         Resource = [
           aws_ecr_repository.kubearchinspect.arn,
-          aws_ecr_repository.chart.arn,
         ]
       }
     ]
@@ -118,14 +102,6 @@ resource "aws_iam_access_key" "ecr_push" {
 locals {
   # e.g. 336151728602.dkr.ecr.us-east-1.amazonaws.com
   ecr_registry = split("/", aws_ecr_repository.kubearchinspect.repository_url)[0]
-
-  # OCI repo path the chart is pushed to / selected from, e.g. charts/kubearchinspect
-  chart_repo_name = aws_ecr_repository.chart.name
-}
-
-output "ecr_chart_repository_url" {
-  description = "Full ECR repository URL for the kubearchinspect Helm chart"
-  value       = aws_ecr_repository.chart.repository_url
 }
 
 output "ecr_repository_url" {

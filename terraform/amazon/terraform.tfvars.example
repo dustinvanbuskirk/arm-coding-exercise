@@ -14,7 +14,10 @@ github_repository = "kubearchinspect"   # name of YOUR fork
 
 # ── Octopus ────────────────────────────────────────────────────────────────────
 octopus_server_url  = "https://your-instance.octopus.app"
-octopus_polling_url = "https://your-instance.octopus.app"
+# octopus_polling_url is auto-derived for Octopus Cloud as
+# https://polling.your-instance.octopus.app — leave it unset on Cloud. Set it
+# only for self-hosted servers (e.g. "https://octopus.example.com:10943").
+# octopus_polling_url = ""
 octopus_space_id    = "Spaces-2"      # ID of YOUR "ARM Exercise" space — look it up (README step 3)
 octopus_space_name  = "ARM Exercise"
 

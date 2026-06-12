@@ -56,7 +56,8 @@ chart, and the IAM roles plus a scoped CI user. Against the **cluster it just
 created** (using `aws eks get-token` for auth, so no kubeconfig juggling) it
 installs the Octopus Kubernetes agent and worker via Helm and creates a default
 gp3 storage class. Against **Octopus** it creates the environments, project group,
-project, two ECR feeds, and the deployment process. Against **GitHub** it writes
+project, an ECR image feed, and the deployment process (the Helm chart is
+delivered through Octopus's built-in feed). Against **GitHub** it writes
 the Actions variables and secrets your fork's workflow needs.
 
 **Release (push a `v*.*.*` tag).** The GitHub workflow authenticates to ECR,
@@ -90,14 +91,14 @@ flowchart TB
       end
       EKS["EKS Auto Mode cluster<br/>system + general-purpose pools<br/>+ arm64 Graviton NodePool"]
       ECRI["ECR repo: kubearchinspect<br/>(container image)"]
-      ECRC["ECR repo: charts/kubearchinspect<br/>(Helm chart, OCI)"]
       IAM["IAM: cluster role, node role,<br/>scoped CI push user + key"]
     end
 
     subgraph Octopus["Octopus Deploy"]
       ENVS["Environments<br/>Dev / Staging / Prod"]
       PROJ["Project: kubearchinspect"]
-      FEEDS["2x AWS ECR feeds<br/>(image + chart)"]
+      FEEDS["ECR image feed"]
+      BUILTIN["Built-in feed<br/>(Helm chart .tgz)"]
       PROC["Process:<br/>Upgrade a Helm Chart"]
     end
 
@@ -118,7 +119,7 @@ flowchart TB
     AGENT -. runs in .-> EKS
     WORKER -. runs in .-> EKS
     FEEDS -. read .-> ECRI
-    FEEDS -. read .-> ECRC
+    BUILTIN -. chart .-> AGENT
     EKS --- VPC
 ```
 
@@ -135,12 +136,13 @@ sequenceDiagram
 
     You->>GH: git push tag v1.2.3
     GH->>ECR: build + push arm64 image :1.2.3
-    GH->>ECR: helm package + push chart :1.2.3
+    GH->>OCD: helm package + upload chart 1.2.3 (built-in feed)
     GH->>OCD: push build information
     GH->>OCD: create release 1.2.3
     OCD->>AG: run "Upgrade a Helm Chart"
-    AG->>ECR: pull chart 1.2.3
+    OCD->>AG: deliver chart 1.2.3 (built-in feed, no docker)
     AG->>K8s: helm upgrade --install (image.tag = 1.2.3)
+    K8s->>ECR: kubelet pulls arm64 image 1.2.3
     K8s->>K8s: Job runs kubearchinspect
     K8s-->>You: arm64 report in pod logs
 ```
@@ -186,7 +188,7 @@ If you set `create_vpc = false`, none of these are created and you supply
 
 | Resource | Notes |
 |---|---|
-| `aws_iam_role.cluster` (+5 policy attachments) | EKS Cluster, Compute, BlockStorage, LoadBalancing, Networking — the full Auto Mode role set AWS recommends. The load-balancing *capability* is disabled on the cluster (egress-only lab), so that policy stays unused. |
+| `aws_iam_role.cluster` (+5 policy attachments) | EKS Cluster, Compute, BlockStorage, LoadBalancing, Networking — Auto Mode requires all five, and requires the compute / load-balancing / block-storage capabilities to be enabled together (you can't disable just one). No ELB is ever created unless a Service/Ingress requests one — this lab requests none and the ELB subnet tags are removed — so the cluster stays egress-only. |
 | `aws_iam_role.node` (+2 attachments) | minimal worker policy + **ECR pull-only** |
 
 ### AWS — ECR + CI identity (`ecr.tf`)
@@ -194,7 +196,6 @@ If you set `create_vpc = false`, none of these are created and you supply
 | Resource | Notes |
 |---|---|
 | `aws_ecr_repository.kubearchinspect` (+ lifecycle policy) | the container image |
-| `aws_ecr_repository.chart` | `charts/kubearchinspect`, kept separate so the chart's OCI artifact doesn't collide with the image |
 | `aws_iam_user.ecr_push` + policy + `aws_iam_access_key.ecr_push` | scoped CI user (created when `create_ecr_push_user = true`) |
 
 ### In-cluster Kubernetes (`namespaces.tf`, `ebs-storage.tf`)
@@ -203,7 +204,8 @@ If you set `create_vpc = false`, none of these are created and you supply
 |---|---|
 | `kubernetes_namespace.octopus_agent` + service account | hosts the agent |
 | `kubernetes_namespace.octopus_workers` + service account | hosts the worker |
-| `kubernetes_storage_class_v1.ebs_gp3` | gp3, provisioner `ebs.csi.eks.amazonaws.com` (the **built-in** Auto Mode driver), set as default |
+| `kubernetes_namespace.environment` (×3) | one per environment — `development`, `staging`, `production` — the deploy and runbook target the namespace matching the environment name (lowercased) |
+| `kubernetes_storage_class_v1.ebs_gp3` | gp3, provisioner `ebs.csi.eks.amazonaws.com` (the **built-in** Auto Mode driver), set as default. Backs the agent/worker workspace as a single `ReadWriteOnce` EBS volume (see caveats). |
 | `helm_release.aws_ebs_csi_driver` | **only** if `install_ebs_csi_driver = true` — leave it off on Auto Mode |
 
 ### Octopus Deploy (`octopus-*.tf`)
@@ -212,12 +214,15 @@ If you set `create_vpc = false`, none of these are created and you supply
 |---|---|
 | `octopusdeploy_environment.this` (×3) | Development, Staging, Production |
 | `octopusdeploy_project_group.tooling` | "Platform Tooling" |
-| `octopusdeploy_project.kubearchinspect` | the project, on the Default lifecycle |
-| `octopusdeploy_aws_elastic_container_registry.image` / `.chart` | two ECR feeds (token auto-refreshed from the CI user's keys) |
+| `octopusdeploy_lifecycle.kubearchinspect` | custom lifecycle: **auto-deploy Development → auto-deploy Staging → stop** (Production is a manual/optional phase). Also fixes environment ordering. |
+| `octopusdeploy_project.kubearchinspect` | the project, on the custom lifecycle above |
+| `octopusdeploy_aws_elastic_container_registry.image` | ECR feed for the container image (token auto-refreshed from the CI user's keys) |
+| built-in feed (`feeds-builtin`) | where the CI workflow uploads the packaged Helm chart `.tgz`; the deploy step acquires it on the agent over the Tentacle protocol (no docker) |
+| `octopusdeploy_variable.namespace` | project variable `Namespace` = `#{Octopus.Environment.Name \| ToLower}` — the per-environment target namespace used by the deploy step and runbook |
 | `octopusdeploy_process` + `octopusdeploy_process_step.helm_upgrade` | the "Upgrade a Helm Chart" deployment step |
 | `octopusdeploy_runbook.verify` (+ process/step) | the **"Verify kubearchinspect results"** runbook — runs `kubectl` in-cluster on the agent to show the arm64 report |
-| `helm_release.octopus_agent` + `null_resource.cleanup_octopus_agent` | installs the agent as a **deployment target** (tags `kubernetes`, `eks-arm`); deregisters it on destroy |
-| `octopusdeploy_static_worker_pool.this` + `helm_release.octopus_worker` | a worker pool and in-cluster workers |
+| `helm_release.octopus_agent` + `null_resource.cleanup_octopus_agent` | installs the agent as a **deployment target** (tags `kubernetes`, `eks-arm`), pinned to arm64/Graviton; deregisters it on destroy |
+| `octopusdeploy_static_worker_pool.this` + `helm_release.octopus_worker` | a worker pool and in-cluster workers (arm64/Graviton) |
 
 ### GitHub (`github.tf`, written into your fork)
 
@@ -243,10 +248,11 @@ workflow installs Helm on the runner.
 
 Quick check that all four are installed and print their versions.
 
-**macOS / Linux (bash):**
+**macOS / Linux (bash or zsh):**
 
 ```bash
-for t in "terraform:terraform version" "aws:aws --version" "kubectl:kubectl version --client" "git:git --version"; do n=${t%%:*}; c=${t#*:}; command -v "$n" >/dev/null 2>&1 && printf '%-10s %s\n' "$n" "$($c 2>/dev/null | head -1)" || printf '%-10s NOT INSTALLED\n' "$n"; done
+check() { command -v "$1" >/dev/null 2>&1 && printf '%-10s %s\n' "$1" "$("$@" 2>/dev/null | head -1)" || printf '%-10s NOT INSTALLED\n' "$1"; }
+check terraform version; check aws --version; check kubectl version --client; check git --version
 ```
 
 **Windows (PowerShell):**
@@ -278,8 +284,8 @@ and an **Octopus** account (server URL + API key).
 On the upstream repository page, click **Fork** (top right) and create the fork
 under your user or org. Note the resulting `owner/name` — you'll pass them as
 `github_owner` and `github_repository`. The fork already contains the workflow at
-`kubearchinspect/.github/workflows/build-and-push.yaml`; Terraform only fills in
-its secrets and variables.
+`.github/workflows/build-and-push.yaml` (repo root, where GitHub Actions discovers
+it); Terraform only fills in its secrets and variables.
 
 ### 2. Create a GitHub fine-grained token
 
@@ -377,11 +383,30 @@ The credentials need permission to create EKS, EC2/VPC, IAM, and ECR resources.
 For a demo, broad permissions are simplest. If your account can't create VPCs, set
 `create_vpc = false` and supply an existing `vpc_id` + `subnet_ids`.
 
-Verify:
+Verify you're authenticated:
 
 ```bash
 aws sts get-caller-identity
 ```
+
+Then **preflight the permissions** — this confirms, without creating anything,
+that your principal is actually allowed to perform the module's key actions (it
+uses `aws iam simulate-principal-policy`):
+
+```bash
+bash scripts/preflight-aws.sh            # macOS / Linux
+```
+
+```powershell
+pwsh scripts/preflight-aws.ps1           # Windows (or: powershell -File scripts\preflight-aws.ps1)
+```
+
+It prints ✅/❌ per action and exits non-zero if any are denied, pointing you at
+the bring-your-own toggles for whatever you can't create. It needs
+`iam:SimulatePrincipalPolicy` — if your principal lacks even that, the script says
+so, which isn't the same as lacking the apply permissions. For SSO/assumed roles it
+auto-resolves the underlying role ARN, or you can pass one explicitly:
+`bash scripts/preflight-aws.sh <role-arn>`.
 
 ### 5. Configure and apply
 
@@ -463,7 +488,8 @@ Graviton nodes.
 > (`job.ttlSecondsAfterFinished`), so run the runbook shortly after a deployment.
 > Prefer to check locally and have `kubectl`? Run
 > `aws eks update-kubeconfig --name <cluster> --region <region>`, then
-> `kubectl logs -n kube-system -l app.kubernetes.io/name=kubearchinspect`.
+> `kubectl logs -n <environment> -l app.kubernetes.io/name=kubearchinspect`
+> (the namespace matches the environment name in lowercase, e.g. `development`).
 
 ---
 
@@ -502,19 +528,71 @@ the included `.gitignore` already excludes `*.tfvars` and state files.
 
 ## Known caveats
 
-- **Helm step acquisition.** The Octopus provider doesn't strongly-type Helm
-  actions, so the deploy step uses raw property keys. The one value worth
-  confirming against your Octopus version is `primary_package.acquisition_location`
-  for an OCI chart pulled from an ECR feed (set to `ExecutionTarget`). If the step
-  can't find the chart, configure it once in the UI and re-export to see the exact
-  shape.
-- **Chart location.** The workflow assumes the chart (`Chart.yaml`, `Dockerfile`,
-  `templates/`) sits at the fork root, matching `context: .` and `helm package .`.
-  If your fork keeps it under a `kubearchinspect/` subdirectory, adjust the Docker
-  context/file and use `helm package ./kubearchinspect`.
+- **The Helm chart is delivered via Octopus's built-in feed, not ECR.** An AWS
+  ECR feed always acquires with Octopus's docker-based package downloader. On a
+  Kubernetes Agent the step runs in a script pod whose image ships `helm` and
+  `kubectl` but not `docker`, so acquiring an ECR/OCI chart on the agent fails
+  with `docker: command not found`. Octopus has no OCI/Helm feed type for the
+  Helm step yet (roadmap only), so to keep acquisition **on the agent, in-cluster,
+  with no docker and without the Server running the step**, the CI workflow
+  `octopus package upload`s the packaged chart to the built-in feed and the deploy
+  step sets `primary_package.acquisition_location = "ExecutionTarget"`. The built-in
+  feed transfers the package over the Tentacle protocol. The container **image**
+  still lives in ECR and is pulled directly by the kubelet. Changing the deployment
+  process means you must create a **new release** (releases snapshot the process)
+  before redeploy.
+- **Workflow / chart layout.** GitHub Actions only discovers workflows at the
+  repository **root** (`.github/workflows/`) — a `.github` nested in a
+  subdirectory is silently ignored. So the workflow lives at the repo root and
+  references the chart and Dockerfile under `kubearchinspect/` explicitly
+  (`context: ./kubearchinspect`, `file: ./kubearchinspect/Dockerfile`,
+  `helm package ./kubearchinspect`). The chart name in `Chart.yaml`
+  (`kubearchinspect`) matches `ECR_REPOSITORY`, so the packaged
+  `kubearchinspect-<version>.tgz` lines up with the chart push. If you relocate
+  the chart, update those three paths together.
 - **Agent before first deploy.** The agent must be registered (end of `apply`)
   before the first release deploys, so the step's target tags resolve. On a brand
   new instance, let `apply` finish fully before pushing a tag.
+- **SSO / Identity Center callers.** The cluster-admin access entry needs a
+  permanent IAM **role** ARN, not the STS *session* ARN. When you authenticate
+  via AWS SSO, the config auto-resolves your session to its real role ARN (full
+  `…/aws-reserved/sso.amazonaws.com/<region>/AWSReservedSSO_…` path, which access
+  entries accept) by looking the role up with `iam:GetRole`. If your principal
+  can't call `GetRole`, or the resolved ARN doesn't match at token-auth time and
+  the in-cluster steps still return `Unauthorized`, set `cluster_admin_principal_arn`
+  in your tfvars to the exact ARN — the path-stripped form
+  `arn:aws:iam::<acct>:role/AWSReservedSSO_<name>_<slug>` is the usual fallback —
+  and re-apply. The cluster already exists, so the re-apply only retries the
+  access entry and the resources gated behind it (fast, no 13-minute wait).
+- **Octopus Cloud polling address.** The agent/worker register as polling
+  Tentacles, and Octopus Cloud serves polling comms on a dedicated host — the
+  instance URL with a `polling.` prefix (`https://polling.<name>.octopus.app`),
+  not the portal URL. Handing the portal URL to the Tentacle makes its
+  pre-registration connectivity check return a `404` and the pod exits with code
+  100. The config auto-derives the `polling.` host for `*.octopus.app`; for a
+  self-hosted server set `octopus_polling_url` explicitly (e.g.
+  `https://octopus.example.com:10943`).
+- **Workspace storage is EBS `ReadWriteOnce` (chart 3.x required).** The agent
+  tentacle pod and its ephemeral script pods share one workspace volume. EBS is
+  block storage and attaches to a single node, so it only supports
+  `ReadWriteOnce` — that's a hard EBS constraint, not a CSI misconfiguration (the
+  Auto Mode EBS CSI is built-in and managed; an empty `kube-system` is normal).
+  On older agent charts (e.g. 2.36.0) the workspace was hardcoded to
+  `ReadWriteMany`, so a bare EBS PVC stayed `Pending` and the Helm install timed
+  out with `context deadline exceeded`. Chart **3.x** makes `ReadWriteOnce` the
+  supported default: the tentacle is a single pod and co-locates its script pods
+  on its own node, so one RWO EBS volume serves both. This repo pins
+  `octopus_agent_chart_version = 3.5.0` and sets `persistence.accessModes =
+  ["ReadWriteOnce"]` with NFS disabled. (Chart 3.x also removed multi-replica
+  tentacles — concurrency now comes from script pods — so there's no worker
+  replica count.)
+- **arm64 / Graviton pinning.** The tentacle pods are pinned to
+  `kubernetes.io/arch=arm64` via `agent.nodeSelector` (from `arm_pod_node_selector`);
+  the EKS Auto Mode general-purpose NodePool is amd64-only, so this routes them to
+  the custom Graviton NodePool. The script pods don't need their own selector —
+  the chart's RWO co-location schedules them onto the agent's (arm64) node, so they
+  inherit Graviton. Override `arm_pod_node_selector` to pin to a specific pool,
+  e.g. `{ "karpenter.sh/nodepool" = "<arm-pool-name>" }`.
 
 ---
 
@@ -524,13 +602,16 @@ the included `.gitignore` already excludes `*.tfvars` and state files.
 .
 ├── README.md                      <- you are here
 ├── .gitignore
-├── kubearchinspect/               <- Helm chart, Dockerfile, CI workflow
+├── .github/workflows/
+│   └── build-and-push.yaml        <- build image + chart, create Octopus release
+├── scripts/
+│   ├── preflight-aws.sh           <- pre-apply AWS permissions check (bash)
+│   └── preflight-aws.ps1          <- same check for Windows (PowerShell)
+├── kubearchinspect/               <- Helm chart + Dockerfile
 │   ├── Chart.yaml
 │   ├── Dockerfile                 <- builds the arm64 image
 │   ├── values.yaml
-│   ├── templates/                 <- Job, RBAC, ServiceAccount, helpers
-│   └── .github/workflows/
-│       └── build-and-push.yaml    <- build image + chart, create Octopus release
+│   └── templates/                 <- Job, RBAC, ServiceAccount, helpers
 └── terraform/amazon/              <- the single Terraform module
     ├── README.md                  <- module-level detail & variable reference
     ├── versions.tf  providers.tf  variables.tf  outputs.tf

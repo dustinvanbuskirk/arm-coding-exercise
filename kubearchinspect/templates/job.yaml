@@ -56,12 +56,69 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.ecrAuth.enabled }}
+      initContainers:
+        # Mint a short-lived registry token from the pod's AWS credentials
+        # (EKS Pod Identity / IRSA) and write the docker config kubearchinspect
+        # reads from $HOME/.docker/config.json. Shared with the main container
+        # via the dockercfg emptyDir.
+        - name: ecr-credentials
+          image: {{ .Values.ecrAuth.awsCliImage | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              echo "[ecr-credentials] user $(id -u):$(id -g)  registry $ECR_REGISTRY  region $AWS_REGION"
+              aws sts get-caller-identity >/dev/null && echo "[ecr-credentials] AWS identity resolved"
+              mkdir -p /dockercfg/.docker
+              TOKEN=$(aws ecr get-login-password --region "$AWS_REGION")
+              AUTH=$(printf 'AWS:%s' "$TOKEN" | base64 | tr -d '\n')
+              printf '{"auths":{"%s":{"auth":"%s"}}}' "$ECR_REGISTRY" "$AUTH" > /dockercfg/.docker/config.json
+              echo "[ecr-credentials] wrote docker config ($(wc -c < /dockercfg/.docker/config.json) bytes)"
+          env:
+            - name: AWS_REGION
+              value: {{ .Values.ecrAuth.region | quote }}
+            - name: ECR_REGISTRY
+              value: {{ .Values.ecrAuth.registry | quote }}
+            - name: HOME
+              value: /dockercfg
+          volumeMounts:
+            - name: dockercfg
+              mountPath: /dockercfg
+      {{- end }}
       containers:
         - name: kubearchinspect
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: {{ include "kubearchinspect.args" . }}
+          {{- if .Values.ecrAuth.enabled }}
+          env:
+            # kubearchinspect reads ~/.docker/config.json; point HOME at the
+            # shared volume the init container wrote.
+            - name: HOME
+              value: /dockercfg
+          {{- end }}
           {{- with .Values.pod.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          volumeMounts:
+            - name: kubeconfig
+              mountPath: {{ .Values.kubeconfig.mountPath }}
+              readOnly: true
+            {{- if .Values.ecrAuth.enabled }}
+            - name: dockercfg
+              mountPath: /dockercfg
+              readOnly: true
+            {{- end }}
+      volumes:
+        # In-cluster kubeconfig (built from the projected service-account token);
+        # kubearchinspect is pointed here via --kube-config-path.
+        - name: kubeconfig
+          configMap:
+            name: {{ include "kubearchinspect.fullname" . }}-kubeconfig
+        {{- if .Values.ecrAuth.enabled }}
+        - name: dockercfg
+          emptyDir: {}
+        {{- end }}

@@ -43,7 +43,10 @@ resource "kubernetes_storage_class_v1" "ebs_gp3" {
     encrypted = "true"
   }
 
-  depends_on = [helm_release.aws_ebs_csi_driver]
+  depends_on = [
+    helm_release.aws_ebs_csi_driver,
+    aws_eks_access_policy_association.admin,
+  ]
 }
 
 # Optional: standard-EKS driver install. Stays disabled on Auto Mode.

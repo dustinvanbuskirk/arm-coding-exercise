@@ -15,6 +15,10 @@ terraform {
       source  = "hashicorp/local"
       version = "~> 2.5"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.5"
+    }
 
     # Platform layer (in-cluster installs)
     kubernetes = {
