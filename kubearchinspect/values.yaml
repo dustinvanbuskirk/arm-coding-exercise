@@ -96,12 +96,34 @@ pod:
     runAsNonRoot: true
     runAsUser: 1000
     runAsGroup: 1000
+    # Group-own mounted volumes (the shared emptyDir the ecrAuth init container
+    # writes the docker config into) so the non-root user can read/write them.
+    fsGroup: 1000
 
 # -- Image pull secrets (for private ECR repos)
 # Not needed when nodes have ECR pull access via their instance role (the Auto
 # Mode node role includes AmazonEC2ContainerRegistryPullOnly).
 imagePullSecrets: []
 # - name: ecr-pull-secret
+
+# -- Private-registry auth for kubearchinspect's OWN manifest queries
+# kubearchinspect inspects each running image's manifest directly from the
+# registry and reads credentials only from $HOME/.docker/config.json — it does
+# NOT use Kubernetes imagePullSecrets or the kubelet pull path. So private ECR
+# images report an "Authentication Error" unless the tool is handed a docker
+# config. When enabled, an init container mints a short-lived ECR token (using
+# the pod's AWS credentials — grant the ServiceAccount ECR read via EKS Pod
+# Identity or IRSA) and writes it to a shared volume the tool reads via $HOME.
+# Octopus enables this automatically (octopus-process.tf sets registry/region);
+# leave it off for a plain public-registry `helm install`.
+ecrAuth:
+  enabled: false
+  # ECR registry host, e.g. 336151728602.dkr.ecr.us-east-1.amazonaws.com
+  registry: ""
+  # AWS region of the registry, e.g. us-east-1
+  region: ""
+  # AWS CLI image for the init container (must have an arm64 variant)
+  awsCliImage: public.ecr.aws/aws-cli/aws-cli:latest
 
 # -- Namespace override. Defaults to the release namespace.
 namespaceOverride: ""

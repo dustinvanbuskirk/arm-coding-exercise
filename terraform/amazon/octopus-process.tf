@@ -58,12 +58,19 @@ resource "octopusdeploy_process_step" "helm_upgrade" {
     "Octopus.Action.Helm.Namespace"     = "#{Namespace}"
     "Octopus.Action.Helm.ResetValues"   = "True"
 
-    # Inline values. ${...} is interpolated by Terraform (the ECR repo URL);
-    # #{...} stays literal for Octopus to resolve at deploy time.
+    # Inline values. ${...} is interpolated by Terraform (the ECR repo URL,
+    # registry host and region); #{...} stays literal for Octopus to resolve at
+    # deploy time. ecrAuth lets kubearchinspect query the private ECR image
+    # manifests (its own image and any other ECR images in the cluster) using a
+    # token minted from the SA's Pod Identity role (see ecr-pod-identity.tf).
     "Octopus.Action.Helm.YamlValues" = <<-EOT
       image:
         repository: ${aws_ecr_repository.kubearchinspect.repository_url}
         tag: "#{Octopus.Release.Number}"
+      ecrAuth:
+        enabled: ${var.enable_kubearchinspect_ecr_auth}
+        registry: ${local.ecr_registry}
+        region: ${var.aws_region}
     EOT
   }
 

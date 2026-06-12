@@ -322,7 +322,7 @@ variable "octopus_agent_storage_size" {
 
 variable "octopus_agent_k8s_monitor_enabled" {
   type    = bool
-  default = false
+  default = true
 }
 
 # ── Octopus Worker ──────────────────────────────────────────────────────────────
