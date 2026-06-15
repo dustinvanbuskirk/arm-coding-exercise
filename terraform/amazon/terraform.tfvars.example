@@ -18,12 +18,12 @@ octopus_server_url  = "https://your-instance.octopus.app"
 # https://polling.your-instance.octopus.app — leave it unset on Cloud. Set it
 # only for self-hosted servers (e.g. "https://octopus.example.com:10943").
 # octopus_polling_url = ""
-octopus_space_id    = "Spaces-2"      # ID of YOUR "ARM Exercise" space — look it up (README step 3)
-octopus_space_name  = "ARM Exercise"
+octopus_space_id    = "Spaces-1"      # ID of YOUR "ARM Exercise" space — look it up (README step 3)
+octopus_space_name  = "Default"       # Customize this if you want
 
 # ── AWS / cluster ───────────────────────────────────────────────────────────────
 aws_region      = "us-east-1"
-cluster_name    = "dvb-eks-arm"
+cluster_name    = "eks-arm"
 cluster_version = "1.32"
 
 # ── VPC: leave create_vpc = true to let Terraform build it. ──────────────────────
