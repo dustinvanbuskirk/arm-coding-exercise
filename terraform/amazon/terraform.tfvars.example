@@ -10,7 +10,7 @@
 
 # ── GitHub (forked repo) ──────────────────────────────────────────────────────
 github_owner      = "your-org-or-user"
-github_repository = "kubearchinspect"   # name of YOUR fork
+github_repository = "arm-coding-exercise"   # name of YOUR fork
 
 # ── Octopus ────────────────────────────────────────────────────────────────────
 octopus_server_url  = "https://your-instance.octopus.app"
