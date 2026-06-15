@@ -57,9 +57,10 @@ resource "helm_release" "octopus_worker" {
           }
         }
 
-        # Pin the tentacle (worker) pod onto arm64 / Graviton. Script pods are
-        # co-located on this node by the chart's RWO mode (below), so they inherit
-        # arm64 without a separate scriptPods affinity.
+        # Pin the worker tentacle onto arm64 / Graviton (same pool as the agent).
+        # Script pods co-locate on this node via the chart's RWO mode, so they
+        # also land on arm64 — which is why scriptPods.worker.image below must be
+        # an arm64 worker-tools tag, not the amd64-only default.
         nodeSelector = var.arm_pod_node_selector
 
         # Pod securityContext (SELinux spc_t by default) — see agent release.
@@ -86,6 +87,22 @@ resource "helm_release" "octopus_worker" {
       resources = {
         requests = { cpu = "250m", memory = "512Mi" }
         limits   = { cpu = "500m", memory = "1Gi" }
+      }
+
+      # Worker script pods run in octopusdeploy/worker-tools, whose default/rolling
+      # tags (e.g. ubuntu.22.04) are published linux/amd64 only — on an arm64 node
+      # those fail with "exec format error". Octopus publishes arm64 builds under
+      # explicit -arm64 tags, so pin the worker's script-pod image to one. (This is
+      # the worker equivalent of the agent's multi-arch kubernetes-agent-tools-base,
+      # set via scriptPods.worker.image; the agent's scriptPods.deploymentTarget
+      # image already resolves to a multi-arch tag and needs no override.)
+      scriptPods = {
+        worker = {
+          image = {
+            repository = var.octopus_worker_script_image_repository
+            tag        = var.octopus_worker_script_image_tag
+          }
+        }
       }
     })
   ]

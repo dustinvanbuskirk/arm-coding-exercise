@@ -351,3 +351,21 @@ variable "octopus_worker_storage_size" {
   type    = string
   default = "10Gi"
 }
+
+variable "octopus_worker_script_image_repository" {
+  description = "Repository for the worker's script-pod tooling image (scriptPods.worker.image.repository)."
+  type        = string
+  default     = "octopusdeploy/worker-tools"
+}
+
+variable "octopus_worker_script_image_tag" {
+  description = <<-EOT
+    Tag for the worker's script-pod tooling image (scriptPods.worker.image.tag).
+    Must be an arm64 build: octopusdeploy/worker-tools publishes arm64 only under
+    explicit -arm64 tags (e.g. 6.6-ubuntu.24.04-arm64); the plain rolling tags
+    (ubuntu.22.04, latest) are linux/amd64 and fail on Graviton with
+    "exec format error". Pin a specific version rather than a rolling tag.
+  EOT
+  type        = string
+  default     = "6.6-ubuntu.24.04-arm64"
+}
