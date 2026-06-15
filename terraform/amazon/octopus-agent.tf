@@ -233,6 +233,12 @@ resource "null_resource" "cleanup_octopus_agent" {
     agent_name  = local.agent_name
     space_id    = var.octopus_space_id
     octopus_url = var.octopus_server_url
+
+    # When the Kubernetes monitor is enabled the deployment target is a
+    # Terraform-managed resource (octopusdeploy_kubernetes_agent_deployment_target)
+    # that Terraform deletes itself. This flag lets the destroy script below skip
+    # the by-name API delete in that case, so the two don't race and 404.
+    target_managed_by_terraform = tostring(local.octopus_monitor_enabled)
   }
 
   provisioner "local-exec" {
@@ -241,6 +247,15 @@ resource "null_resource" "cleanup_octopus_agent" {
       # $TF_VAR_octopus_api_key is read from the environment, not from state.
       # $-prefixed names without braces are literal to Terraform and resolved by
       # the shell; $${...self...} values are interpolated by Terraform.
+
+      # When the monitor is enabled, octopusdeploy_kubernetes_agent_deployment_target
+      # owns this target and Terraform deletes it. Deleting it here too would race
+      # that resource and leave its delete to 404 (aborting the destroy), so skip.
+      if [ "${self.triggers.target_managed_by_terraform}" = "true" ]; then
+        echo "Agent target is managed by Terraform; Terraform will delete it. Skipping API deregistration."
+        exit 0
+      fi
+
       if [ -z "$TF_VAR_octopus_api_key" ]; then
         echo "TF_VAR_octopus_api_key is not set in the environment — skipping agent deregistration."
         echo "Either re-run destroy with 'export TF_VAR_octopus_api_key=API-...' or remove the"
